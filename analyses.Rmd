@@ -1,0 +1,795 @@
+---
+title: "SNL Analyses"
+author: "Alexandra Basilakos Kennedy"
+date: "10/12/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.path='Figs/', echo=TRUE, tidy=TRUE, message=F, warning=F, cache=T, fig.dim = c(8, 6))
+```
+
+# Introduction  
+
+These data analyses were (virtually) presenetd at the 2020 Society for the Neurobiology of Language (SNL) conference. This is a "sandbox submission" - a work in progress. 
+
+The purpose of the study detailed here was to identify predictors of long-term change in a sample of individuals with chronic aphasia who completed six weeks of speech and language therapy. Due to the COVID-19 pandemic, data collection was halted and some analyses have been slowed. These resultsinclude exploratory data analyses, as well as a very preliminary model predicting long-term aphasia severity. Please see the corresponding poster presentation for full details.
+
+
+```{r, include = FALSE}
+# Read in data, add packages, make sure data are of correct type for further analyis.
+library(ggplot2)
+library(Amelia)
+library(formattable)
+library(data.table)
+library(tidyverse)
+library(ggcorrplot)
+library(hrbrthemes)
+library(CGPfunctions)
+library(ggpubr)
+library(lme4)
+library(sparkline)
+library(e1071)
+library(MuMIn)
+library(lmerTest)
+
+larc_na <- read.csv("/Users/basilaka/Desktop/SNL_poster/larc_complete_snl.csv",header=T)
+
+
+
+```
+
+
+```{r, include = FALSE}
+# Visualize Missing Data 
+
+missmap(larc_na, col=c("yellow","black"), legend=TRUE)
+#Last observation carried forward used to fill in missing data for the following variables: exercise post-stroke (carried over from exercise pre-stroke, n=2 imputed), DWMH/PVH/Fazekas at larc (n=1 imputed), wais (n=1 imputed), KDT/PPTT (n=1 imputed; averaged to create semantic processing mean score). These were done in excel, given small sample size (ease of not writing extra code). New .csv imported for remaining analyses.  
+
+larc <- read.csv("/Users/basilaka/Desktop/SNL_poster/larc_complete_snl_nafill.csv")
+
+larc$diabetes <- as.factor(larc$diabetes)
+larc$depression <- as.factor(larc$depression)
+larc$three_point_change <- as.factor(larc$three_point_change)
+larc$five_point_change <- as.factor(larc$five_point_change)
+larc$wpm.pmg.base.6mo <- as.numeric(larc$wpm.pmg.base.6mo)
+larc$improve_not <- as.factor(larc$improve_not)
+
+larc$faz.change <- larc$fazekas_larc - larc$fazekas_polar
+larc$dwmh.change <- larc$dwmh - larc$dwmh_polar
+larc$pvh.change <- larc$pvh - larc$pvh_polar
+
+
+
+```
+
+# The study sample 
+
+Participants were recruited from the POLAR study, an ongoing trial of aphasia therapy conducted through the Center of the Study for Aphasia Recovery. For the current analyses, all participants who completed the POLAR study, and were at least six months beyond the last assessment, were eligible. Details of the POLAR study can be found in Basilakos et al. (revisions submitted), or by visiting https://cstar.sc.edu/projects/. Participant details can be found below. 
+
+```{r, include = FALSE}
+larc_descriptors <- larc %>%
+  select(age_at_larc, 
+         mpo_at_larc, 
+         larc_fu_months, 
+         aq_change,
+         wab_aq_polar, 
+         wab_aq_larc)
+
+#create table from above variables 
+
+names <- c("Number Enrolled", "F:M Ratio", "Age at Follow-Up","MPO at Follow-Up","Follow Up Interval (Months)", "Baseline AQ", "Follow-up AQ", "AQ Change")
+
+means <- c("n=39 (38 PWA)", "9F/29M", round(mean(larc$age_at_larc),2), round(mean(larc$mpo_at_larc),2), round(mean(larc$larc_fu_months),2), round(mean(larc$wab_aq_polar),2), round(mean(larc$wab_aq_larc),2), round(mean(larc$aq_change),2))
+
+sd <- c("--", "--", round(sd(larc$age_at_larc),2), round(sd(larc$mpo_at_larc),2), round(sd(larc$larc_fu_months),2), round(sd(larc$wab_aq_polar),2), round(sd(larc$wab_aq_larc),2), round(sd(larc$aq_change),2))
+
+
+larc_table <- data.frame(variable=names, average=means, standard_deviation=sd)
+
+#lg_bold <- formatter("span", style = ~style("font.weight" = "bold", "font.size" = "20px"))
+# table_demographics <- formattable(larc_table2, list(area(row = 2) ~ lg_bold))
+
+table_demographics <- formattable(larc_table,
+                                  align =c("r","c","c"), 
+                                  list(`variable` = formatter("span", style = ~ style(color = "black",
+                                                                                      font.style = "italic", 
+                                                                                      font.weight =
+                                                                                        "bold",font.size="10px")),
+                                       `average` = formatter("span", style = ~ style(color = "black",
+                                                                                     font.size="10px")),
+                                       `standard_deviation` = formatter("span", style = ~ style(color = "black",
+                                                                                                font.size="10px"))))
+
+table_demographics
+
+###maybe add another table with sparkline 
+
+sparkline_hist <- function(x, breaks, type="bar"){
+  as.character(
+    htmltools::as.tags(
+      sparkline(
+        hist(
+          x,
+          breaks=breaks,
+          plot=FALSE
+        )$density,
+        type = type
+      )
+    )
+  )
+}
+
+sparkline_larc <- larc %>% 
+  group_by(three_point_change) %>% 
+  summarise(
+    N=n(),
+    Mean_Age=round(mean(age_at_larc),2),
+    Age_SD=round(sd(age_at_larc),2),
+    Mean_Change=round(mean(aq_change),2),
+    Change_SD=round(sd(aq_change),2),
+    Baseline_Severity=sparkline_hist(
+      wab_aq_polar,
+      hist(larc$wab_aq_polar,plot=FALSE)$breaks
+    )
+  )  %>%
+  formattable(align = c("l", "c", "c", "c", "c", "c"), 
+              list(`three_point_change` = formatter("span", style = ~ style(color = "black",
+                                                                                      font.style = "italic", 
+                                                                                      font.weight = 
+                                                                              "bold",font.size="10px")),
+                                       `N` = formatter("span", style = ~ style(color = "black",
+                                                                                     font.size="10px")),
+                                       `Mean_Age` = formatter("span", style = ~ style(color = "black",
+                                                                                       font.size="10px")),
+                                       `Age_SD` = formatter("span", style = ~ style(color = "black",
+                                                                                    font.size="10px")),
+                                        `Mean_Change`  = formatter("span", style = ~ style(color = "black",
+                                                                                     font.size="10px")),
+                                        `Change_SD` = formatter("span", style = ~ style(color = "black",
+                                                                                     font.size="10px")))) %>%
+  formattable::as.htmlwidget()
+
+sparkline_larc$dependencies <- c(
+  sparkline_larc$dependencies,
+  htmlwidgets:::widget_dependencies("sparkline", "sparkline"))
+sparkline_larc
+
+
+#reference for the formattable/sparkline code: https://www.displayr.com/formattable/
+```
+
+```{r}
+table_demographics
+
+```
+
+
+
+# Who changes?  
+
+Who changes, and to what extent? Participants are classified as "improvers" if they have a >= 3 point change on the AQ at LARC. They are labeled "decliners" if they had a <= -3 point AQ change. Those who remained stable did not demonstrate an AQ change > | 3 |. This is based on Holland et al. (2017, Aphasiology) and Johnson et al. (2019, AJSLP). A three-point change on the AQ is unlikely due to random fluctuations in test performance (Holland et al., 2007), as the SEM of the WAB-AQ is 2.5 (Kertesz, 2007). 
+
+```{r, include = FALSE}
+#Visualize change by group ("three_point_change" variable)
+
+
+### barplot of changes, grouped by "change classification (>= |3| points on the WAB-R AQ)" 
+barplot_changers <- larc %>%
+  ggplot(aes(x=three_point_change, y=aq_change, fill=three_point_change)) + 
+  geom_boxplot() + 
+  geom_jitter(color="black", size=1, alpha=.3) +
+  theme_ipsum() +
+  theme(legend.position="none",
+      plot.title = element_text(size=20),
+      axis.text.x = element_text(size=10),
+      axis.title.y = element_text(size=10),
+      axis.text.y = element_text(size=10)) +
+  ggtitle("AQ Change by Group") +
+  ylim(-14, 14) +
+  xlab("")
+
+print(barplot_changers)
+
+#Visualize change by each participant 
+bar_aqchange = ggplot(larc, aes(x=reorder(polar_id, aq_change), y=aq_change)) +
+            geom_bar(stat="identity", aes(fill=..y..)) + 
+  ggtitle("AQ Change by Participant") + 
+            ylab("AQ Change") + 
+            xlab("Participant") +
+  theme_ipsum() +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.title = element_blank(),
+        plot.title = element_text(size=20),
+        axis.title.y = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.title.x = element_text(size=10)) +
+   ylim(-14, 14) 
+
+bar_aqchange 
+
+#Paired t-test to show that there are indeed significant differences between baseline and follow up tests 
+(t.test(larc$wab_aq_polar, larc$wab_aq_larc, paired=TRUE))
+
+
+
+
+```
+
+These figures show mean AQ change by group, as well as each participant's individual change on the WAB-AQ. 
+```{r}
+
+barplot_changers
+bar_aqchange 
+
+```
+
+
+This table shows basic information of study participants, grouped according to their degree of change on the WAB-AQ
+```{r}
+sparkline_larc
+```
+
+# Change ~ Demographics 
+```{r, include = FALSE}
+
+larc_demographics <- larc %>%
+  select(sex, 
+         diabetes, 
+         depression, 
+         age_at_larc, 
+         larc_fu_months, 
+         education_years, 
+         bmi, 
+         mpo_at_larc, 
+         exercise_poststroke,
+         aq_change) 
+
+demographic_corr <- cor(larc_demographics[4:10], use="na.or.complete")
+demographic_pmat <- cor_pmat(larc_demographics[4:10], use="na.or.complete")
+
+demog_corplot <- ggcorrplot(demographic_corr, method = "square", type="lower", p.mat=demographic_pmat,  title = "Correlations: AQ Change and Demographics", ggtheme = hrbrthemes::theme_ipsum())
+demog_corplot
+
+
+```
+
+A series of correlation analyses were conducted to determine which demographic factors relate to change. It was hypotesized that age, education, follow-up time, and other health variables may be related to change (Basilakos et al., revisions submitted; Johnson et al., 2019). Interestingly, of those factors that were selected, none are related to AQ-change.
+```{r}
+demog_corplot 
+```
+
+
+# Change ~ Performance on cognitive-linguistic tests at baseline 
+```{r, include = FALSE}
+
+baselines <- larc %>%
+  select(wais_polar, 
+         semantic_processing_polar,
+         talsa.nw.filled_polar,
+         talsa.nw.unfilled_polar,
+         talsa.w.filled_polar,
+         talsa.w.unfilled_polar, 
+         wab_aq_polar,
+         flu_polar, 
+         spontsp_polar, 
+         avc_polar,
+         rep_polar, 
+         naming_polar,
+         aq_change)
+
+baselines_corr <- cor(baselines, use="na.or.complete")
+baselines_pmat <- cor_pmat(baselines, use="na.or.complete")
+
+baselines_corplot <- ggcorrplot(baselines_corr, method = "square", type="lower", p.mat=baselines_pmat, ggtheme = hrbrthemes::theme_ipsum(),
+                                title="Correlations: Change and Baseline Ability", 
+                                lab_size = 12
+                                )
+                              
+                              
+baselines_corplot
+
+
+scatter_talsa <- ggplot(larc, aes(talsa.nw.unfilled_polar, aq_change)) + 
+  geom_point() +
+  theme_ipsum() + 
+  stat_smooth(method="lm", se=FALSE) +
+  ggtitle("WAB AQ ~ TALSA Rhyme") +
+  theme(axis.text.x=element_blank(),
+      axis.ticks.x=element_blank(),
+      legend.title = element_blank(),
+      plot.title = element_text(size=20),
+      axis.title.y = element_text(size=10),
+      axis.text.y = element_text(size=10),
+      axis.title.x = element_text(size=10))
+
+scatter_talsa
+
+```
+
+Correlating performance on baseline tests of speech-language and cognition with AQ Change, performance on only one test was significant - the TALSA rhyme judgment (with non-words/no distractors; Martin et al., 2018, PMCID: PMC6135249). The figures below present a correlation matrix between baseline measures and AQ change, as well as a plot showing the relationship between TALSA scores and AQ change. This result will receive further exploration with additional measures of phonological processing and short-term memory. This may also indciate a relationship between preserved inner speech and outcome (Fama et al., 2019, PMCID: PMC6544392)
+```{r}
+baselines_corplot
+scatter_talsa
+
+```
+
+
+# Change ~ Progress in therapy 
+```{r, include = FALSE}
+# Import new dataset 
+tx <- read.csv("/Users/basilaka/Desktop/SNL_poster/treatment_data_larcsubset.csv")
+
+#filter to visualize treatment changes for each change group 
+tx_improvers <- filter(tx, outcome=="improve")
+tx_decliners <- filter(tx, outcome=="decline")
+tx_stable <- filter(tx, outcome=="stable")
+
+#change variables to correct type 
+tx$outcome <- as.factor(tx$outcome)
+tx$time <- as.factor(tx$time)
+
+#plot slope graph for entire group, but it's a bit busy, so take a look by group (also busy, but slightly better)
+group_slope <- newggslopegraph(dataframe = tx, 
+                Times = time, 
+                Measurement = sf_scoresummary,
+                Grouping = subject,
+                Title = "Therapy Change",
+                SubTitle = "All Participants", 
+                Caption = NULL) 
+
+improver_slope <- newggslopegraph(dataframe = tx_improvers, 
+                               Times = time, 
+                               Measurement = sf_scoresummary,
+                               Grouping = subject,
+                               Title = "Therapy Change",
+                               SubTitle = "Improvers",
+                               Caption = NULL) 
+
+decliner_slope <- newggslopegraph(dataframe = tx_decliners, 
+                                  Times = time, 
+                                  Measurement = sf_scoresummary,
+                                  Grouping = subject,
+                                  Title = "Therapy Change",
+                                  SubTitle = "Decliners", 
+                                  Caption = NULL) 
+
+stable_slope <-  newggslopegraph(dataframe = tx_stable, 
+                                 Times = time, 
+                                 Measurement = sf_scoresummary,
+                                 Grouping = subject,
+                                 Title = "Therapy Change",
+                                 SubTitle = "No Change Group", 
+                                 Caption = NULL) 
+
+# Arrange slope graphs from all three groups 
+ggarrange(improver_slope, decliner_slope, stable_slope, ncol = 3)
+
+
+# Now, look specifically at semantic-focused and phonologically-focused therapies
+
+semtx <- select(tx, subject, time, outcome, sf_scoresummary)
+phontx <- select(tx, subject, time, outcome, phon_phoncompsummary)
+
+summary_changes_sf_pre <- ggline(semtx, "time", "sf_scoresummary",
+       shape = "outcome",
+       color = "outcome",
+       add = "mean_se",
+       xlab = "Treatment Week",
+       ylab = "Mean Semantic Accuracy",
+       title = "Weekly Treatment Performance",
+       size=1,
+       ylim=c(30,100),
+       ggtheme = theme_ipsum(),
+       legend="none")
+
+summary_changes_sf <- summary_changes_sf_pre +
+  font("title", size = 20, face = "bold") +
+  font("xlab", size = 15, color = "black")+
+  font("ylab", size = 15, color = "black")+
+  font("xy.text", size = 15, color = "black", face = "bold")
+
+summary_changes_phon_pre <- ggline(phontx, "time", "phon_phoncompsummary",
+                             shape = "outcome",
+                             color = "outcome",
+                             add = "mean_se",
+                             xlab = "Treatment Week",
+                             ylab = "Mean Phonemic Accuracy",
+                             legend = "none",
+                             title = " ",
+                             ylim=c(30,100),
+                             ggtheme = hrbrthemes::theme_ipsum(),
+                             size=1)
+
+summary_changes_phon <- summary_changes_phon_pre +
+  font("title", size = 20, face = "bold") +
+  font("xlab", size = 15, color = "black")+
+  font("ylab", size = 15, color = "black")+
+  font("xy.text", size = 15, color = "black", face = "bold")
+
+mean_changes_tx <- ggarrange(summary_changes_sf, summary_changes_phon)
+mean_changes_tx
+
+#look at first week of treatment, and see if it is related to WAB AQ scores 
+
+week1sum <- tx %>%
+  filter(time =="week1") %>%
+  select(time, 
+         sf_scoresummary,
+         phon_phoncompsummary,
+         aq_polar)
+
+cor_test_sfa_aq <- cor.test(week1sum$aq_polar, week1sum$sf_scoresummary)
+cor_test_pcatx_aq <- cor.test(week1sum$aq_polar, week1sum$phon_phoncompsummary)
+
+
+#wrangle data to create a change score between weeks 1 - 3...not the best way to look at a repeated measures design, but just taking a quick peek at change. Will explore further in the future. s
+
+spread_semtx <- tx %>% 
+  select(subject, outcome, time, sf_scoresummary, wais_larc, wab_aq_larc, aq_polar, aq_change, fazekas_polar, mpo_at_larc) %>%
+  spread(key=time, value=sf_scoresummary) %>%
+  mutate(change_raw = (week3-week1))
+
+semtx_change_cor <- cor(spread_semtx[c(3:8, 12)], use="na.or.complete", method="spearman")
+semtx_change_p <- cor_pmat(spread_semtx[c(3:8, 12)], use="na.or.complete", method="spearman")
+
+semtx_corplot <- ggcorrplot(semtx_change_cor, method = "square", type = "lower", p.mat = semtx_change_p, title = "Semantic Tx Performance", ggtheme = hrbrthemes::theme_ipsum())
+semtx_corplot
+
+#run a LME to see how AQ predicts sf_scoresummary on a weekly bases 
+
+model_tx_change_sfa <- lmer(sf_scoresummary ~ aq_polar  + (1|subject), data=tx, REML=FALSE)
+
+summary(model_tx_change_sfa)
+r.squaredGLMM(model_tx_change_sfa)
+
+# as above, but with PCAtx score summary 
+
+model_tx_change_pcatx <- lmer(phon_phoncompsummary ~ aq_polar  + (1|subject), data=tx, REML=FALSE)
+
+summary(model_tx_change_pcatx)
+r.squaredGLMM(model_tx_change_pcatx)
+
+#https://ademos.people.uic.edu/Chapter17.html#33_comparing_model_fit 
+#https://rpkgs.datanovia.com/ggpubr/reference/ggline.html
+```
+
+As part of the POLAR trial, all participants completed three semantically-focused and three phonologically-focused treatments. Skilled speech-language pathologists conducted all treatment sessions and track progress for each session. Here, we investigate performance on two treatments - semantic feature analysis (SFA) and phonological components analysis (PCAtx). Each score represents the percentage of targets named correctly at the end of each treatment (SFA and PCAtx)
+
+Notice how variable individuals are in their response to treatment. 
+```{r}
+ggarrange(improver_slope, decliner_slope, stable_slope, ncol = 3)
+```
+
+
+However, some general trends appear when inspecting group means (figure below). Colors are as follows:
+Red: Participants who declined on the WAB-AQ
+Green: Participants with an improved WAB-AQ
+Blue: Participants whose performance on the WAB-AQ was stable. 
+It appears that treatment performance is driven by WAB-AQ. This is evidenced by high correlations between each treatment summary score and WAB-AQ after the first week, as follows:
+1. SFA Week 1 and WAB-AQ: r = .61, p=4.7e-05
+2. PCAtx Week 1 and WAB-AQ: r=.57, p=.00015
+
+Throughout the three weeks of treatment, a linear mixed effects model showed that WAB AQ scores accounted for 32% (PCAtx) and 40% (SFA) of the variance in treatment progress. 
+Progress throughout treatment, as well as how it predicted long-term outcome, will be explored further in subsequent analyses. Because we won't focus on treatment outcome and long-term change here, see the source code for details. 
+```{r}
+mean_changes_tx 
+```
+
+
+
+# Change ~ BDNF genotype 
+
+The brain derived neurotrophic factor (BDNF) has been implicated in plasticity and stroke recovery (Dancause & Nudo, 2011, PMCID: PMC3245976). Specfically,  Prior work from our group showed that brain activation for language tasks was less in individuals with the Met allele (Kristinsson et al., 2019, PMCID: PMC7203521) and that the effects of brain stimulation treatment may also be less robust in Met allele carriers (Fridriksson et al., 2018, PMCID: PMCPMC6293970). As an exploratory look at whether improvement differed by typical or atypical BDNF expression, we completed the following analyses: 
+
+First, we visualized change by genotype, where individuals were grouped as Met allele carriers if BDNF expression was either Met/Met or Val/Met. Those labeled as 'not Met allele carriers' had Val/Val expressions. Note that all but 3 participants had BDNF genotype data. Visualizations are based on a sample size of 35. 
+
+Second, given that there were fewer Met allele carriers than non-carriers, a propensity matching score was computed to create balanced groups, matched on age and aphasia severity. We then compared change by group. 
+
+
+```{r, include=FALSE}
+
+larc %>%
+  group_by(Met_yn) %>% 
+  summarise(n_participants = n(), mean_age=mean(age_at_larc), sd_age=sd(age_at_larc), mean_wais=mean(wais_larc, na.rm=TRUE), sd_wais=sd(wais_larc,
+                                                                                                                                        na.rm=TRUE),
+            mean_wabaq_larc = mean(wab_aq_larc), sd_wabaq_larc=sd(wab_aq_larc))
+
+larc_gen <- larc %>%
+  filter(!is.na(Met_yn) == TRUE)
+
+#make sure data are the right type 
+
+larc_gen$Met_yn <- as.factor(larc_gen$Met_yn)
+larc_gen$three_point_change <- as.factor(larc_gen$three_point_change)
+
+# explore differences in AQ at baseline/follow-up
+
+met_summary_stats <- larc_gen %>%
+  group_by(Met_yn) %>%
+  summarise(mean_wab_base = mean(wab_aq_polar), 
+            mean_wab_larc = mean(wab_aq_larc),
+            mean_change_wab = mean(aq_change))
+met_summary_stats #0 indicates no Met allele, 1 indicates +Met allele 
+
+#below, we look at t-tests to compare Met carriers to those without a Met allele. Despite the table showing numerically better performance in those without a Met allele, there is no statistically significant difference in each comparison. 
+t.test(larc_gen$wab_aq_polar ~ larc_gen$Met_yn)
+t.test(larc_gen$wab_aq_larc ~ larc_gen$Met_yn)
+t.test(larc_gen$aq_change ~ larc_gen$Met_yn)
+
+# To illustrate the above,  visualize change by group (Met carriers vs. those without a Met allele)
+
+plot_aq_gene <- ggplot(larc_gen, aes(Met_yn, aq_change)) +
+  geom_dotplot(aes(fill=Met_yn), binaxis = "y", stackdir="center") +
+  ggtitle("AQ Change by MET Allele") +
+  theme_ipsum() +
+  theme(axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+        legend.title = element_blank(),
+        plot.title = element_text(size=20),
+        axis.title.y = element_text(size=10),
+        axis.text.y = element_text(size=10),
+        axis.title.x = element_text(size=10)) +
+  ylim(-11,16)
+plot_aq_gene
+
+
+#However, there are many more participants with typical BDNF expression compared to the Met allele carriers. To better compare samples, samples were matched so that there was a balanced sample size between +Met and -Met groups. 
+
+ps <- glm(Met_yn ~ fazekas_polar + talsa.nw.unfilled_polar, family = binomial("logit"), data=larc_gen)
+summary(ps)
+
+ps_df <- data.frame(pr_score = predict(ps, type = "response"), Met_yn = ps$model$Met_yn)
+head(ps_df)
+
+library(MatchIt)
+larc_gen_match <- select(larc_gen, 
+                         polar_id, 
+                         Met_yn, 
+                         age_at_larc, 
+                         wab_aq_larc, 
+                         wab_aq_polar, 
+                         aq_change, 
+                         fazekas_polar, 
+                         fazekas_larc,
+                         three_point_change,
+                         change_fazekas,
+                         talsa.nw.unfilled_polar, 
+                         improve_not)
+
+match_out <- matchit(Met_yn ~ talsa.nw.unfilled_polar + fazekas_polar, data = larc_gen_match, method="nearest", ratio = 1)
+summary(match_out)
+matched_data <- match.data(match_out) #dataframe of just the matched
+
+#visualization - but not a great match
+fn_bal <- function(dta, variable) {
+  dta$variable <- dta[, variable]
+  dta$Met_yn <- as.factor(dta$Met_yn)
+  support <- c(min(dta$variable), max(dta$variable))
+  ggplot(dta, aes(x = distance, y = variable, color = Met_yn)) +
+    geom_point(alpha = 0.2, size = 1.3) +
+    geom_smooth(method = "loess", se = F) +
+    xlab("Propensity score") +
+    ylab(variable) +
+    theme_ipsum() +
+    ylim(support)
+}
+#
+#
+library(gridExtra)
+ matched_participants <- grid.arrange(
+   fn_bal(matched_data, "talsa.nw.unfilled_polar"),
+   fn_bal(matched_data, "fazekas_polar"),
+   nrow=2)
+ 
+ 
+#Now, for some stats with the matched groups
+
+change_met_tbl4 <- table(matched_data$three_point_change, matched_data$Met_yn)
+change_met_tbl4
+chisq.test(change_met_tbl4, simulate.p.value = TRUE) 
+
+
+
+```
+The table below shows that those without a Met allele (Met_yn=0) generally demonstrated better WAB-AQ scores at baseline and follow-up.  There is also a numerically higher change in AQ scores in those without a Met allele. However, these differences were not statistically significant. To illustrate, the figure shows change by BDNF expression, plotted for each participant in the study. Notably, Kristinsson et al. (2019, PMCID: PMC7203521) found a significant difference in aphasia severity between those with and without Met alleles; however, that study included 87 participants, whereas this analysis has a much smaller sample size. 
+
+```{r}
+met_summary_stats
+plot_aq_gene
+
+```
+
+In the figure and table above, it is clear that the two groups are not balanced. To balance groups, matched on factors that may covary with AQ change, a propensity matching score was used to match participants by baseline Fazekas scores and baseline Talsa scores. Balancing created two individual, each with 11 participants. A chi-squared analysis conducted to determine if change (improvement, decline, or stable) was related to the presence/absence of the Met allele. This analysis was sgnificant - X-squared = 8.9, p-value = 0.006, suggesting that the Met allele may be important for long term change. In the table below, one participant in the "typical BDNF" group declined, but four individuals in the +Met allele group declined. Importantly, there were also participants with the Met allele that demonstrated improvement - the same number as those who improved in the "typical BDNF" group. Is there another factor that influences why Met carriers improve or decline? That is a question that should be answered with a larger sample size. Given the small sample, these results should be interpreted cautiously. 
+```{r}
+ matched_participants <- grid.arrange(
+   fn_bal(matched_data, "talsa.nw.unfilled_polar"),
+   fn_bal(matched_data, "fazekas_polar"),
+   nrow=2)
+
+change_met_tbl4 # 1=Met allele carrier, 0=typical BDNF expression 
+chisq.test(change_met_tbl4, simulate.p.value = TRUE) 
+```
+
+
+# Change ~ Brain health 
+
+Prior work by our group (e.g., Basilakos et al., 2019, PMCID: PMC6693961) has shown that the severity of white matter hyperintensities, or leukoaraiosis, at baseline is predictive of worsening aphasia severity over time. Leukoaraiosis is associated with axonal breakdown, in turn affecting white matter structural networks (Wilmskoetter et al., 2019, PMID: 31501862). Moreover, it has been associated with reductions in grey matter volume (Lambert et al., 2016, PMCID: PMC4806220). Given that these factors may affect therapeutic outcomes and long-term change in aphasia severity, we explored them here. 
+
+To do so, we (blindly) rated T2-weighted MRIs at baseline and follow-up using the Fazekas scale (Fazekas et al., 1987). The Fazekas scale considers white matter hyperintensities in the periventricular area (PVH) as well as in deep white matter areas (DWMH). Each is rated on a 4-point scale, where 0 means there are no hyperintensities, and 3 means there are confluent hyperintensities. PVH and DWMH scores can be combined for a total Fazekas score, with a max possible of 6.
+
+To confirm the findings of Basilakos et al. (2019), we analyzed whether baseline Fazekas scores were predictive of AQ chage. 
+```{r, include = FALSE}
+
+#what variables are correlated with fazekas change scores? 
+
+larc_faz <- larc %>%
+  select(polar_id,
+         bmi, 
+         age_at_larc, 
+         education_years, 
+         lesionvol,
+         wais_polar, 
+         fazekas_polar,
+         wab_aq_larc, 
+         wab_aq_polar, 
+         fazekas_change_binary, 
+         talsa.nw.unfilled_polar,
+         fazekas_larc,
+         diabetes,
+         aq_change)
+
+larc_faz$polar_id <- as.factor(larc_faz$polar_id)
+
+faz_corr <- larc_faz %>%
+  select(-fazekas_change_binary, -fazekas_larc, -polar_id, -diabetes)%>%
+  cor(method="spearman", use = "na.or.complete")
+
+faz_pmat <- larc_faz %>%
+  select(-fazekas_change_binary, -fazekas_larc, -polar_id, -diabetes)%>%
+  cor_pmat(method="spearman", use = "na.or.complete")
+
+faz_corrplot <- ggcorrplot(faz_corr, method="square", type = "lower", p.mat = faz_pmat, 
+                           ggtheme = hrbrthemes::theme_ipsum(),
+                           tl.cex = 20,
+                           tl.srt=45)
+faz_corrplot
+
+#using a mixed effects model, we related variables that have been associated with leukoaraiosis (e.g., age, diabetes, BMI, and cognitive factors, like age). The model was significant - age, BMI, and diabetes explained change in fazekas scores (explained below). 
+
+# did fazekas scores worsen over time?
+t.test(larc_faz$fazekas_polar, larc_faz$fazekas_larc, paired=TRUE, alternative="less")
+
+#what predicts this change in fazekas scores? 
+
+
+
+larc_faz_lm <- larc_faz %>%
+  gather("fazekas_larc", "fazekas_polar", key="time", value="rating")
+
+model_fazekas_change <- lmer(rating ~ (1|polar_id) + (1|time) + education_years + bmi + age_at_larc +factor(diabetes), data=larc_faz_lm)
+null_model <- lm(rating~education_years + bmi + age_at_larc +factor(diabetes), data=larc_faz_lm)
+
+anova(model_fazekas_change, null_model)
+
+summary(model_fazekas_change)
+coefs <- data.frame(coef(summary(model_fazekas_change)))
+coefs$p.z <- 2 * (1 - pnorm(abs(coefs$t.value)))
+round(coefs, 2)
+
+r.squaredGLMM(model_fazekas_change)
+
+
+
+
+```
+
+The correlation matrix below shows that indeed, baseline Fazekas scores are significantly, negatively correlated with AQ change, where higher Fazekas scores (i.e., more severe leukoaraiosis) are associated with declines in AQ. Note that in the correlation matrix, cells marked with an 'x' are non-significant relationships. 
+```{r}
+faz_corrplot
+```
+
+We also found that there was a significant increase in overall Fazekas scores at follow-up (t(37) = 5.5, p=1.5e-06), indicating that leukoaraiosis did signficantly worsen over time. Although this change was not realted to AQ change, we explored factors that may lead to worsening leukoaraiosis. 
+
+To identify which factors may have predicted this change, we used a linear mixed effects model, with random slope and intercept. Independent variables were those that have been reported to be related to leukoaraiosis [e.g., cognitive ability (here, we used education)], BMI, age, and the presence of diabetes). As seen in the coefficients table below, higher education was significantly with less change, where as diabetes was associated with increased leukoaraiosis. The effect of BMI approached statistical significance. 
+
+```{r}
+round(coefs,2) # predicting change in leukoaraiosis 
+```
+
+
+# SVM to predict classification 
+
+Finally, using all the above analyses, SVM was used to create a **preliminary** model that could predict change. We conducted two analyses: 
+Analysis 1: predict “improve” vs. “not improve”, where those who improved demonstrated >= 3 point change on the WAB AQ. Those labeled “non-improvers” included participants who demonstrated decline, or those who remained stable
+Analysis 2: As above; however, those who declined were removed from the sample, as there were only six participants who declined. “Improvers” were compared to “stable” participants. 
+Dependent variables included the following baseline scores: Fazekas total and TALSA rhyme judgment, as these two factors were significantly correlated with AQ Change.
+
+```{r, include=FALSE}
+#
+larc$change_fazekas_scaled <- scale(larc$change_fazekas)
+larc$age_at_larc_scaled <- scale(larc$age_at_larc)
+larc$talsa.nw.unfilled_polar_scaled <- scale(larc$talsa.nw.unfilled_polar)
+
+
+larc$change_fazekas_scaled <- scale(larc$change_fazekas)
+larc$fazekas_polar_scaled <- scale(larc$fazekas_polar)
+larc$age_at_larc_scaled <- scale(larc$age_at_larc)
+larc$talsa.nw.unfilled_polar_scaled <- scale(larc$talsa.nw.unfilled_polar)
+
+
+svmclass1 = svm(improve_not ~  fazekas_polar_scaled + talsa.nw.unfilled_polar_scaled, 
+                   kernel="radial",
+                   cost=1,
+                   gamma=.75,
+                   data=larc) 
+
+print(svmclass1)
+summary(svmclass1)
+table(svmclass1$fitted,larc$improve_not)
+
+##remove decliners 
+
+larc_nodecline <- larc %>%
+  filter(three_point_change %in% c("stable", "improve"))
+
+svmclass2 = svm(improve_not ~  fazekas_polar_scaled + talsa.nw.unfilled_polar_scaled, 
+                   kernel="radial",
+                   cost=1,
+                   gamma=.75,
+                   data=larc_nodecline) 
+
+print(svmclass2)
+summary(svmclass2)
+table(svmclass2$fitted,larc_nodecline$improve_not)
+
+
+```
+
+Analysis 1: Results show that the model was 74% accurate in predicting whether a participant would improve or not.
+```{r}
+table(svmclass1$fitted,larc$improve_not) #note: 1=improve, 0=stable or decline 
+```
+
+Analysis 2: Removing participants who declined from the model did not change the prediction accuracy very much - this model was 75% accurate.  However, accuracy did improve for predicting who would improve. 
+```{r}
+table(svmclass2$fitted,larc_nodecline$improve_not) #note: 1=improve, 0=stable
+```
+
+To conclude, these results are a preliminary look at a longitudinal dataset of individuals with chronic aphasia, followed at least one year after receiving speech-language therapy. These results suggest brain health and cognitive performance may be important predictors when it comes to understanding long-term change in chronic aphasia. However, these results also show that there there is a lot of individual variability in change. Future directions will focus on analysis of neuroimaging data to relate Fazekas scores to objective measures of white matter integrity, as well as to predict which baseline neuroimaging factors may predict worsening leukoaraiosis over time. Future analysis will also implement model validation (e.g., out of sample prediction). 
+
+# Acknowledgements 
+
+This work was supported by the following grants from the NIH NIDCD: P50 DC014664, P50 DC014664-04S1  
+
+We are grateful for the participants who completed this study, and the speech-language pathologists who were instrumental in testing (Mary Aitchison, PhD, CCC-SLP and Skyler Fontenot, MS, CCC-SLP). We also would like to thank graduate research associates - Judith DeFoor, Anja Derry, Eileen Durkin, and Samantha Wilt - for their work with data transcription/coding. 
+
+
+# References 
+
+Basilakos A, Stark BC, Johnson L, Rorden C, Yourganov G, Bonilha L, Fridriksson J. Leukoaraiosis Is Associated With a Decline in Language Abilities in Chronic Aphasia. Neurorehabilitation and Neural Repair. 2019;33(9):718-29. doi: https://doi.org/10.1177/1545968319862561.
+
+Dancause N, Nudo RJ. Shaping plasticity to enhance recovery after injury.  Progress in brain research. 2011: 273-95. doi: https://10.1016/B978-0-444-53355-5.00015-4. 
+
+Fama ME, Henderson MP, Snider SF, Hayward W, Friedman RB, Turkeltaub PE. Self-reported inner speech relates to phonological retrieval ability in people with aphasia. Consciousness and cognition. 2019;71:18-29. doi: 10.1016/j.concog.2019.03.005.
+
+Fazekas F, Chawluk JB, Alavi A, Hurtig HI, Zimmerman RA. MR signal abnormalities at 1.5 T in Alzheimer's dementia and normal aging. American journal of roentgenology 1987;149(2):351-6. doi: https://10.2214/ajr.149.2.351.
+
+Fridriksson J, Elm J, Stark B, Basilakos A, Rorden C, Sen S, George M, Gottfried M, Bonilha L. BDNF genotype and tDCS interaction in aphasia treatment. Brain Stimul. 2018;11(6):1276-81. doi: https://10.1016/j.brs.2018.08.009. 
+
+Holland AL, Fromm D, Forbes M, MacWhinney B. Long-term recovery in stroke accompanied by aphasia: a reconsideration. Aphasiology. 2017;31(2):152-65. doi: https://10.1080/02687038.2016.1184221.
+
+Johnson L, Basilakos A, Yourganov G, Cai B, Bonilha L, Rorden C, Fridriksson J. Progression of Aphasia Severity in the Chronic Stages of Stroke. American Journal of Speech-Language Pathology. 2019. Epub 4/8/2019. doi: https://doi.org/10.1044/2018_AJSLP-18-0123.
+
+Kertesz A. Western Aphasia Battery-Revised. San Antionio, TX: Pearson; 2007.
+
+Kristinsson S, Yourganov G, Xiao F, Bonilha L, Stark BC, Rorden C, Basilakos A, Fridriksson J. Brain-derived neurotrophic factor genotype–specific differences in cortical activation in chronic aphasia. Journal of Speech, Language, and Hearing Research. 2019;62(11):3923-36. doi: https://doi.org/10.1044/2019_JSLHR-L-RSNP-19-0021.
+
+Lambert C, Narean JS, Benjamin P, Zeestraten E, Barrick TR, Markus HS. Characterising the grey matter correlates of leukoaraiosis in cerebral small vessel disease. NeuroImage: Clinical. 2015;9:194-205. doi: https://10.1016/j.nicl.2015.07.002.
+
+Martin N, Minkina I, Kohen FP, Kalinyak-Fliszar M. Assessment of linguistic and verbal short-term memory components of language abilities in aphasia. Journal of Neurolinguistics. 2018;48:199-225. doi: https://s10.1016/j.jneuroling.2018.02.006.
+
+Wilmskoetter J, Marebwa BK, Basilakos A, Rorden C, Hickok G, Hillis A, Johnson L, Stark BC, Fridriksson J, Bonilha L. Long-range fibre damage in small vessel brain disease affects aphasia severity. Brain 2019;142(10):1-12. doi: https://10.1093/brain/awz251.
+
+ 
