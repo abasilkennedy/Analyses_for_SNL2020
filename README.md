@@ -1,1 +1,1 @@
-# analyses_for_SNL2020
+Additional details to supplement the presentation, "Exploring long-term treatment-related changes in individuals with aphasia," presented at the 2020 (Virtual) Society for the Neurobiology of Language conference. 
